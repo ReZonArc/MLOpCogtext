@@ -30,6 +30,7 @@ class StorageBackendFactory:
         self._backends = {
             StorageType.VECTOR_DB: {
                 'chromadb': self._create_chromadb_backend,
+                'hypergraph': self._create_hypergraph_backend,
             },
             StorageType.DOCUMENT_DB: {
                 'sqlite': self._create_sqlite_backend,
@@ -63,6 +64,10 @@ class StorageBackendFactory:
         except Exception as e:
             logger.exception(f"Creating {backend_name} backend failed: {e}")
             return None
+    
+    def _create_hypergraph_backend(self, config: Dict[str, Any]):
+        from opencontext.storage.backends.hypergraph_backend import HypergraphStorage
+        return HypergraphStorage()
     
     def _create_chromadb_backend(self, config: Dict[str, Any]):
         from opencontext.storage.backends.chromadb_backend import ChromaDBBackend

@@ -142,6 +142,14 @@ storage:
         path: "${CONTEXT_PATH:.}/persist/chromadb"
         collection_prefix: "opencontext"
     
+    # OpenCog-inspired hypergraph storage for advanced context reasoning
+    - name: "hypergraph_vector"
+      storage_type: "vector_db"
+      backend: "hypergraph"
+      config:
+        storage_path: "${CONTEXT_PATH:.}/persist/hypergraph/hypergraph.db"
+        hypergraph_name: "MineContext_HyperGraph"
+    
     - name: "document_store"
       storage_type: "document_db"
       backend: "sqlite"
