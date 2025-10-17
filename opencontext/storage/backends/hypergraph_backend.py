@@ -9,7 +9,6 @@ Hypergraph storage backend for OpenCog-inspired multi-layer context representati
 
 import json
 import sqlite3
-import pickle
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -66,7 +65,7 @@ class HypergraphStorage(IContextStorage):
                 description TEXT,
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP,
-                graph_data BLOB
+                graph_data TEXT
             );
             
             CREATE TABLE IF NOT EXISTS atoms (
@@ -112,10 +111,44 @@ class HypergraphStorage(IContextStorage):
         row = cursor.fetchone()
         
         if row:
-            # Load existing hypergraph
-            graph_data = pickle.loads(row[0])
-            hypergraph = HyperGraph.model_validate(graph_data)
-            logger.info(f"Loaded existing hypergraph '{name}' with {len(hypergraph.atoms)} atoms")
+            # Load existing hypergraph using JSON instead of pickle for security
+            try:
+                graph_data = json.loads(row[0])
+                # Handle datetime parsing
+                from datetime import datetime
+                
+                def parse_datetimes(obj):
+                    if isinstance(obj, dict):
+                        for key, value in obj.items():
+                            if key.endswith('_at') or key == 'created_at' or key == 'updated_at':
+                                if isinstance(value, str):
+                                    try:
+                                        obj[key] = datetime.fromisoformat(value)
+                                    except (ValueError, TypeError):
+                                        pass
+                            elif key == 'atom_type' and isinstance(value, str):
+                                # Convert atom_type string back to enum
+                                from opencontext.models.hypergraph import AtomType
+                                try:
+                                    obj[key] = AtomType(value)
+                                except ValueError:
+                                    pass
+                            elif isinstance(value, dict):
+                                parse_datetimes(value)
+                            elif isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, dict):
+                                        parse_datetimes(item)
+                    return obj
+                
+                graph_data = parse_datetimes(graph_data)
+                hypergraph = HyperGraph.model_validate(graph_data)
+                logger.info(f"Loaded existing hypergraph '{name}' with {len(hypergraph.atoms)} atoms")
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to load hypergraph data: {e}")
+                # Create new hypergraph if loading fails
+                hypergraph = HyperGraph(name=name, description="MineContext Multi-layer Context HyperGraph")
+                self._save_hypergraph(hypergraph)
         else:
             # Create new hypergraph
             hypergraph = HyperGraph(name=name, description="MineContext Multi-layer Context HyperGraph")
@@ -125,24 +158,42 @@ class HypergraphStorage(IContextStorage):
         return hypergraph
     
     def _save_hypergraph(self, hypergraph: HyperGraph):
-        """Save hypergraph to database"""
-        graph_data = pickle.dumps(hypergraph.model_dump())
-        
-        cursor = self.connection.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO hypergraphs 
-            (graph_id, name, description, created_at, updated_at, graph_data)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            hypergraph.graph_id,
-            hypergraph.name,
-            hypergraph.description,
-            hypergraph.created_at,
-            hypergraph.updated_at,
-            graph_data
-        ))
-        
-        self.connection.commit()
+        """Save hypergraph to database using JSON serialization"""
+        try:
+            # Convert to JSON-safe format
+            graph_dict = hypergraph.model_dump()
+            # Handle datetime serialization
+            import datetime
+            
+            def json_serializer(obj):
+                if isinstance(obj, datetime.datetime):
+                    return obj.isoformat()
+                elif hasattr(obj, 'value'):  # Handle enums
+                    return obj.value
+                elif isinstance(obj, set):  # Handle sets
+                    return list(obj)
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            
+            graph_data = json.dumps(graph_dict, default=json_serializer)
+            
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO hypergraphs 
+                (graph_id, name, description, created_at, updated_at, graph_data)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                hypergraph.graph_id,
+                hypergraph.name,
+                hypergraph.description,
+                hypergraph.created_at,
+                hypergraph.updated_at,
+                graph_data
+            ))
+            
+            self.connection.commit()
+        except Exception as e:
+            logger.error(f"Failed to save hypergraph: {e}")
+            raise
     
     def _save_atom(self, atom: Atom):
         """Save individual atom to database"""
@@ -288,9 +339,10 @@ class HypergraphStorage(IContextStorage):
         # Create temporal relationships if multiple contexts exist
         self._create_temporal_relationships(context, context_node_uuid)
         
-        # Propagate attention based on importance
-        attention_boost = context.extracted_data.importance / 100.0
-        self.hypergraph.propagate_attention(context_node_uuid, sti_boost=attention_boost)
+        # Propagate attention based on importance (validate range)
+        if context.extracted_data.importance is not None:
+            attention_boost = max(0.0, min(1.0, context.extracted_data.importance / 100.0))
+            self.hypergraph.propagate_attention(context_node_uuid, sti_boost=attention_boost)
         
         return atoms_created
     
@@ -407,9 +459,10 @@ class HypergraphStorage(IContextStorage):
                     if atom_uuid in self.hypergraph.atoms:
                         del self.hypergraph.atoms[atom_uuid]
                 
-                # Delete from database
+                # Delete from database using parameterized queries
                 cursor.execute("DELETE FROM processed_contexts WHERE id = ?", (doc_id,))
-                cursor.execute("DELETE FROM atoms WHERE uuid IN ({})".format(','.join(['?'] * len(atom_uuids))), atom_uuids)
+                placeholders = ','.join(['?'] * len(atom_uuids))
+                cursor.execute(f"DELETE FROM atoms WHERE uuid IN ({placeholders})", atom_uuids)
                 
                 self.connection.commit()
                 self._save_hypergraph(self.hypergraph)

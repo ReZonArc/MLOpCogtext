@@ -127,8 +127,8 @@ class HyperGraph(BaseModel):
     layers: Dict[int, ContextLayer] = Field(default_factory=dict)
     max_layer: int = 0
     
-    # Indexing for fast lookups
-    atoms_by_type: Dict[AtomType, Set[str]] = Field(default_factory=dict)
+    # Indexing for fast lookups (use string keys for JSON compatibility)
+    atoms_by_type: Dict[str, Set[str]] = Field(default_factory=dict)
     atoms_by_name: Dict[str, str] = Field(default_factory=dict)
     links_by_outgoing: Dict[str, Set[str]] = Field(default_factory=dict)
     
@@ -138,12 +138,22 @@ class HyperGraph(BaseModel):
         atom.layer = layer
         
         # Update indexes
-        if atom.atom_type not in self.atoms_by_type:
-            self.atoms_by_type[atom.atom_type] = set()
-        self.atoms_by_type[atom.atom_type].add(atom.uuid)
+        atom_type_key = atom.atom_type.value
+        if atom_type_key not in self.atoms_by_type:
+            self.atoms_by_type[atom_type_key] = set()
+        self.atoms_by_type[atom_type_key].add(atom.uuid)
         
         if atom.name:
-            self.atoms_by_name[atom.name] = atom.uuid
+            # Handle name collisions by storing multiple UUIDs for the same name
+            if atom.name in self.atoms_by_name:
+                # If name already exists, create a list to store multiple UUIDs
+                existing = self.atoms_by_name[atom.name]
+                if isinstance(existing, str):
+                    self.atoms_by_name[atom.name] = [existing, atom.uuid]
+                else:
+                    existing.append(atom.uuid)
+            else:
+                self.atoms_by_name[atom.name] = atom.uuid
         
         # Update layer
         if layer not in self.layers:
@@ -166,15 +176,26 @@ class HyperGraph(BaseModel):
         return self.atoms.get(atom_uuid)
     
     def get_atom_by_name(self, name: str) -> Optional[Atom]:
-        """Get an atom by name"""
-        atom_uuid = self.atoms_by_name.get(name)
-        if atom_uuid:
-            return self.atoms.get(atom_uuid)
+        """Get an atom by name (returns first match if multiple exist)"""
+        atom_ref = self.atoms_by_name.get(name)
+        if atom_ref is None:
+            return None
+        
+        # Handle both single UUID and list of UUIDs
+        if isinstance(atom_ref, str):
+            atom_uuid = atom_ref
+        else:
+            # Return first atom if multiple exist with same name
+            atom_uuid = atom_ref[0] if atom_ref else None
+            
+        if atom_uuid and atom_uuid in self.atoms:
+            return self.atoms[atom_uuid]
         return None
     
     def get_atoms_by_type(self, atom_type: AtomType) -> List[Atom]:
         """Get all atoms of a specific type"""
-        atom_uuids = self.atoms_by_type.get(atom_type, set())
+        atom_type_key = atom_type.value
+        atom_uuids = self.atoms_by_type.get(atom_type_key, set())
         return [self.atoms[uuid] for uuid in atom_uuids if uuid in self.atoms]
     
     def get_incoming_links(self, atom_uuid: str) -> List[Link]:
@@ -272,7 +293,7 @@ class HyperGraph(BaseModel):
             "total_atoms": len(self.atoms),
             "total_layers": len(self.layers),
             "max_layer": self.max_layer,
-            "atoms_by_type": {atom_type.value: len(uuids) for atom_type, uuids in self.atoms_by_type.items()},
+            "atoms_by_type": {atom_type: len(uuids) for atom_type, uuids in self.atoms_by_type.items()},
             "atoms_by_layer": {layer_id: len(layer.atoms) for layer_id, layer in self.layers.items()}
         }
         return stats
