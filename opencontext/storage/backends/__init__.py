@@ -10,8 +10,9 @@ Storage backend package initialization file
 
 from .sqlite_backend import SQLiteBackend
 from .chromadb_backend import ChromaDBBackend
+from .hypergraph_backend import HypergraphStorage
 
 try:
-    __all__ = ['SQLiteBackend', 'ChromaDBBackend']
+    __all__ = ['SQLiteBackend', 'ChromaDBBackend', 'HypergraphStorage']
 except ImportError:
-    __all__ = ['SQLiteBackend', 'ChromaDBBackend']
+    __all__ = ['SQLiteBackend', 'ChromaDBBackend', 'HypergraphStorage']

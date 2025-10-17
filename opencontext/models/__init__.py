@@ -17,6 +17,16 @@ from opencontext.models.context import (
     ExtractedData,
     ContextProperties,
 )
+from opencontext.models.hypergraph import (
+    AtomType,
+    TruthValue,
+    AttentionValue,
+    Atom,
+    Node,
+    Link,
+    ContextLayer,
+    HyperGraph,
+)
 
 __all__ = [
     "RawContextProperties",
@@ -25,4 +35,12 @@ __all__ = [
     "ContextProperties",
     "ContextSource",
     "ContentFormat",
+    "AtomType",
+    "TruthValue",
+    "AttentionValue",
+    "Atom",
+    "Node",
+    "Link",
+    "ContextLayer",
+    "HyperGraph",
 ]

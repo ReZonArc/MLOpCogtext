@@ -39,6 +39,7 @@ dependencies = [
     "volcengine",
     "pillow",
     "imagehash",
+    "networkx",
 ]
 
 [project.urls]
